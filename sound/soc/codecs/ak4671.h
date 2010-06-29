@@ -35,6 +35,7 @@
 #define MM_AUDIO_VOICECALL_SPK 		0x12
 #define MM_AUDIO_VOICECALL_HP 		0x13
 #define MM_AUDIO_VOICECALL_BT 		0x14
+#define MM_AUDIO_VOICECALL_SPK_LOOP 	0x15
 #define MM_AUDIO_VOICEMEMO	 		0x20
 #define MM_AUDIO_VOICEMEMO_MAIN		0x21
 #define MM_AUDIO_VOICEMEMO_SUB 		0x22
@@ -45,6 +46,7 @@
 #define MM_AUDIO_FMRADIO_SPK 		0x32
 #define MM_AUDIO_FMRADIO_HP 		0x33
 #define MM_AUDIO_FMRADIO_BT 		0x34
+#define MM_AUDIO_FMRADIO_SPK_HP      0x35
 
 #define AK4671_PATH_CHANGE	 		0xf1
 
@@ -176,6 +178,12 @@
 #define AK4671_MIC_PATH_MAIN			0
 #define AK4671_MIC_PATH_SUB				1
 
+/* 0 : unmute 
+ * 1 : mute   */
+#define AK4671_INPUT_MUTE				1
+#define AK4671_INPUT_UNMUTE 			0
+
+
 struct ak4671_setup_data {
 	unsigned short i2c_address;
 };
@@ -190,6 +198,8 @@ extern struct snd_soc_dai ak4671_dai;
 extern struct snd_soc_codec_device soc_codec_dev_ak4671;
 
 /* Board specific function */
+extern int voice_call_auto_response_disable(struct snd_soc_codec *, int);
+extern int voice_call_auto_response_enable(struct snd_soc_codec *, int);
 extern int audio_init(void);
 extern int audio_power(int);
 extern int amp_init(void);
@@ -205,9 +215,8 @@ extern int path_disable(struct snd_soc_codec *, int);
 extern int set_sample_rate(struct snd_soc_codec *, int);
 extern int idle_mode_enable(struct snd_soc_codec *, int);
 extern int idle_mode_disable(struct snd_soc_codec *, int);
-extern int rec_enable(struct snd_soc_codec *, int);
-extern int rec_disable(struct snd_soc_codec *, int);
-extern int path_change(struct snd_soc_codec *, int, int);
-
+extern int voice_call_rec_enable(struct snd_soc_codec *, int);
+extern int voice_call_rec_disable(struct snd_soc_codec *, int);
+extern void set_mic_mute(struct snd_soc_codec *codec, int mode, int mute);
 
 #endif

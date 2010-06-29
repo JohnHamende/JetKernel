@@ -171,7 +171,6 @@ struct platform_device *s3c24xx_uart_src[4] = {
 	&s3c24xx_uart_device3,
 };
 
-//struct platform_device *s3c24xx_uart_devs[4] = {
-struct platform_device *s3c_uart_devs[4] = {
+struct platform_device *s3c24xx_uart_devs[4] = {
 };
 

@@ -145,7 +145,7 @@ static inline int current_has_bt(void)
 {
 	return (current_has_bt_admin() || in_egroup_p(AID_NET_BT));
 }
-# else
+#else
 static inline int current_has_bt_admin(void)
 {
 	return 1;
@@ -167,7 +167,7 @@ static int bt_sock_create(struct net *net, struct socket *sock, int proto)
 			return -EPERM;
 	} else if (!current_has_bt_admin())
 		return -EPERM;
-
+	
 	if (net != &init_net)
 		return -EAFNOSUPPORT;
 
@@ -375,7 +375,7 @@ int bt_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		if (sk->sk_state == BT_LISTEN)
 			return -EINVAL;
 
-		amount = sk->sk_sndbuf - atomic_read(&sk->sk_wmem_alloc);
+		amount = sk->sk_sndbuf - sk_wmem_alloc_get(sk);
 		if (amount < 0)
 			amount = 0;
 		err = put_user(amount, (int __user *) arg);

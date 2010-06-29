@@ -14,64 +14,88 @@
 #ifndef _S3C_KEYPAD_H_
 #define _S3C_KEYPAD_H_
 
+#define GPIO_nPOWER             S3C64XX_GPN(5)
+#define GPIO_nPOWER_AF          (2)
+#define GPIO_LEVEL_LOW          0
+
+
+#define __CONFIG_KEYLOCK__				1
+#define __CONFIG_WAKEUP_FAKE_KEY__	1
+#define __CONFIG_EARKEY__				1
 static void __iomem *key_base;
 
-#define GET_KEYCODE(x)                  (x+1)
+#define KEYPAD_COLUMNS	3	
+#define KEYPAD_ROWS	3		
 
-#define KEYCODE_DUMPKEY	247
-#define KEYCODE_SENDEND	248
-#define KEYCODE_ENDCALL	249
-#define KEYCODE_FOCUS	250
-#define KEYCODE_HOLDKEY	251
+#if (__CONFIG_KEYLOCK__ + __CONFIG_WAKEUP_FAKE_KEY__ + __CONFIG_EARKEY__ == 3)
+#define MAX_KEYPAD_NR 	12
+#elif (__CONFIG_KEYLOCK__ + __CONFIG_WAKEUP_FAKE_KEY__ + __CONFIG_EARKEY__ == 2)
+#define MAX_KEYPAD_NR 	11
+#elif (__CONFIG_KEYLOCK__ + __CONFIG_WAKEUP_FAKE_KEY__ + __CONFIG_EARKEY__ == 1)
+#define MAX_KEYPAD_NR 	10
+#else
+#define MAX_KEYPAD_NR 	9
+#endif
 
-#define KEYPAD_ROW_GPIOCON      S3C64XX_GPKCON1
-#define KEYPAD_ROW_GPIOPUD      S3C64XX_GPKPUD
-#define KEYPAD_COL_GPIOCON      S3C64XX_GPLCON
-#define KEYPAD_COL_GPIOPUD      S3C64XX_GPLPUD
+#define MAX_KEYMASK_NR	32
 
+#define KEY_PRESSED 1
+#define KEY_RELEASED 0
+
+
+
+#ifdef __CONFIG_WAKEUP_FAKE_KEY__
+	#define KEY_WAKEUP		KEY_NEW
+
+
+int keypad_keycode[] = {
+	KEY_POWER,		KEY_SEARCH,			KEY_CONFIG,
+	KEY_SEND,		KEY_CONFIG,			KEY_VOLUMEUP,
+	KEY_MENU,		KEY_BACK,			KEY_VOLUMEDOWN,
+#ifdef __CONFIG_KEYLOCK__
+	KEY_POWER,
+#endif
+	KEY_POWER,
+#ifdef __CONFIG_WAKEUP_FAKE_KEY__
+	KEY_POWER,
+#endif
+};
+
+//int keypad_keycode[] = {
+//	KEY_FRONT,		KEY_EXIT,			KEY_CONFIG,
+//	KEY_PHONE,		KEY_VOLUMEDOWN,		KEY_VOLUMEUP,
+//	KEY_SEARCH,		KEY_CAMERA,			KEY_SEARCH,
+//#ifdef __CONFIG_KEYLOCK__
+//	KEY_SCREENLOCK,
+//#endif
+//	KEY_SEND,
+//#ifdef __CONFIG_WAKEUP_FAKE_KEY__
+//	KEY_WAKEUP,
+//#endif
+//};
+
+#else
+int keypad_keycode[] = {
+		 1,  2,  3,  
+		 4,  5,  6,  
+		 7,  8,	 9,
+	};
+#endif
+
+#ifdef CONFIG_CPU_S3C6410
 #define KEYPAD_DELAY		(50)
+#endif
+
 #define	KEYIFCOL_CLEAR		(readl(key_base+S3C_KEYIFCOL) & ~0xffff)
 #define	KEYIFCON_CLEAR		(readl(key_base+S3C_KEYIFCON) & ~0x1f)
-#define KEYIFFC_DIV			(readl(key_base+S3C_KEYIFFC) | 0x1)
-
-struct s3c_keypad_slide
-{
-    int     eint;
-    int     gpio;
-    int     gpio_af;
-    int     state_upset;
-};
-
-struct s3c_keypad_special_key
-{
-    int     mask_low;
-    int     mask_high;
-    int     keycode;
-};
- 
-struct s3c_keypad_gpio_key
-{
-    int     eint;
-    int     gpio;
-    int     gpio_af;
-	int		keycode;
-	int     state_upset;
-};
-
-struct s3c_keypad_extra 
-{
-	int 	board_num;
-	struct 	s3c_keypad_slide		*slide;
-	struct 	s3c_keypad_special_key	*special_key;
-	int		special_key_num;
-	struct 	s3c_keypad_gpio_key	*gpio_key;
-	int		gpio_key_num;
-	int		wakeup_by_keypad;
-};
+#define KEYIFFC_DIV		(readl(key_base+S3C_KEYIFFC) | 0x1)
 
 struct s3c_keypad {
-	struct 	input_dev 	*dev;
-	struct 	s3c_keypad_extra *extra;
+	struct input_dev *dev;
+	int nr_rows;	
+	int no_cols;
+	int total_keys; 
+	int keycodes[MAX_KEYPAD_NR];
 };
 
 extern void s3c_setup_keypad_cfg_gpio(int rows, int columns);

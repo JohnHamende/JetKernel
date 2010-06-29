@@ -1,5 +1,6 @@
 Documentation for /proc/sys/kernel/*	kernel version 2.2.10
 	(c) 1998, 1999,  Rik van Riel <riel@nl.linux.org>
+	(c) 2009,        Shen Feng<shen@cn.fujitsu.com>
 
 For general info and legal blurb, please look in README.
 
@@ -18,6 +19,7 @@ Currently, these files might (depending on your configuration)
 show up in /proc/sys/kernel:
 - acpi_video_flags
 - acct
+- auto_msgmni
 - core_pattern
 - core_uses_pid
 - ctrl-alt-del
@@ -25,14 +27,17 @@ show up in /proc/sys/kernel:
 - domainname
 - hostname
 - hotplug
+- iso_cpu
 - java-appletviewer           [ binfmt_java, obsolete ]
 - java-interpreter            [ binfmt_java, obsolete ]
 - kstack_depth_to_print       [ X86 only ]
 - l2cr                        [ PPC only ]
 - modprobe                    ==> Documentation/debugging-modules.txt
+- modules_disabled
 - msgmax
 - msgmnb
 - msgmni
+- nmi_watchdog
 - osrelease
 - ostype
 - overflowgid
@@ -40,10 +45,12 @@ show up in /proc/sys/kernel:
 - panic
 - pid_max
 - powersave-nap               [ PPC only ]
+- panic_on_unrecovered_nmi
 - printk
 - randomize_va_space
 - real-root-dev               ==> Documentation/initrd.txt
 - reboot-cmd                  [ SPARC only ]
+- rr_interval
 - rtsig-max
 - rtsig-nr
 - sem
@@ -55,6 +62,7 @@ show up in /proc/sys/kernel:
 - sysrq                       ==> Documentation/sysrq.txt
 - tainted
 - threads-max
+- unknown_nmi_panic
 - version
 
 ==============================================================
@@ -165,6 +173,16 @@ Default value is "/sbin/hotplug".
 
 ==============================================================
 
+iso_cpu:
+
+This sets the percentage cpu that the unprivileged SCHED_ISO tasks can
+run effectively at realtime priority, averaged over a rolling five
+seconds over the -whole- system, meaning all cpus.
+
+Set to 70 (percent) by default.
+
+==============================================================
+
 l2cr: (PPC only)
 
 This flag controls the L2 cache of G3 processor boards. If
@@ -176,6 +194,16 @@ kstack_depth_to_print: (X86 only)
 
 Controls the number of words to print when dumping the raw
 kernel stack.
+
+==============================================================
+
+modules_disabled:
+
+A toggle value indicating if modules are allowed to be loaded
+in an otherwise modular kernel.  This toggle defaults to off
+(0), but can be set true (1).  Once true, modules can be
+neither loaded nor unloaded, and the toggle cannot be set back
+to false.
 
 ==============================================================
 
@@ -317,6 +345,20 @@ rebooting. ???
 
 ==============================================================
 
+rr_interval:
+
+This is the smallest duration that any cpu process scheduling unit
+will run for. Increasing this value can increase throughput of cpu
+bound tasks substantially but at the expense of increased latencies
+overall. Conversely decreasing it will decrease average and maximum
+latencies but at the expense of throughput. This value is in
+milliseconds and the default value chosen depends on the number of
+cpus available at scheduler initialisation with a minimum of 6.
+
+Valid values are from 1-5000.
+
+==============================================================
+
 rtsig-max & rtsig-nr:
 
 The file rtsig-max can be used to tune the maximum number
@@ -380,4 +422,52 @@ can be ORed together:
         instead of using the one provided by the hardware.
  512 - A kernel warning has occurred.
 1024 - A module from drivers/staging was loaded.
+
+==============================================================
+
+auto_msgmni:
+
+Enables/Disables automatic recomputing of msgmni upon memory add/remove or
+upon ipc namespace creation/removal (see the msgmni description above).
+Echoing "1" into this file enables msgmni automatic recomputing.
+Echoing "0" turns it off.
+auto_msgmni default value is 1.
+
+==============================================================
+
+nmi_watchdog:
+
+Enables/Disables the NMI watchdog on x86 systems.  When the value is non-zero
+the NMI watchdog is enabled and will continuously test all online cpus to
+determine whether or not they are still functioning properly. Currently,
+passing "nmi_watchdog=" parameter at boot time is required for this function
+to work.
+
+If LAPIC NMI watchdog method is in use (nmi_watchdog=2 kernel parameter), the
+NMI watchdog shares registers with oprofile. By disabling the NMI watchdog,
+oprofile may have more registers to utilize.
+
+==============================================================
+
+unknown_nmi_panic:
+
+The value in this file affects behavior of handling NMI. When the value is
+non-zero, unknown NMI is trapped and then panic occurs. At that time, kernel
+debugging information is displayed on console.
+
+NMI switch that most IA32 servers have fires unknown NMI up, for example.
+If a system hangs up, try pressing the NMI switch.
+
+==============================================================
+
+panic_on_unrecovered_nmi:
+
+The default Linux behaviour on an NMI of either memory or unknown is to continue
+operation. For many environments such as scientific computing it is preferable
+that the box is taken out and the error dealt with than an uncorrected
+parity/ECC error get propogated.
+
+A small number of systems do generate NMI's for bizarre random reasons such as
+power management so the default is off. That sysctl works like the existing
+panic controls already in that directory.
 

@@ -171,10 +171,8 @@ static void hci_conn_timeout(unsigned long arg)
 	switch (conn->state) {
 	case BT_CONNECT:
 	case BT_CONNECT2:
-		if (conn->type == ACL_LINK)
+		if (conn->type == ACL_LINK && conn->out)
 			hci_acl_connect_cancel(conn);
-		else
-			hci_acl_disconn(conn, 0x13);
 		break;
 	case BT_CONFIG:
 	case BT_CONNECTED:
@@ -213,9 +211,9 @@ struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst)
 	conn->type  = type;
 	conn->mode  = HCI_CM_ACTIVE;
 	conn->state = BT_OPEN;
-	conn->auth_type = HCI_AT_GENERAL_BONDING;
 
 	conn->power_save = 1;
+	conn->disc_timeout = HCI_DISCONN_TIMEOUT;
 
 	switch (type) {
 	case ACL_LINK:
@@ -247,6 +245,8 @@ struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst)
 	hci_conn_hash_add(hdev, conn);
 	if (hdev->notify)
 		hdev->notify(hdev, HCI_NOTIFY_CONN_ADD);
+
+	hci_conn_init_sysfs(conn);
 
 	tasklet_enable(&hdev->tx_task);
 
@@ -289,6 +289,8 @@ int hci_conn_del(struct hci_conn *conn)
 	skb_queue_purge(&conn->data_q);
 
 	hci_conn_del_sysfs(conn);
+
+	hci_dev_put(hdev);
 
 	return 0;
 }
@@ -372,9 +374,6 @@ struct hci_conn *hci_connect(struct hci_dev *hdev, int type, bdaddr_t *dst, __u8
 
 	if (acl->state == BT_CONNECTED &&
 			(sco->state == BT_OPEN || sco->state == BT_CLOSED)) {
-		acl->power_save = 1;
-		hci_conn_enter_active_mode(acl);
-
 		if (lmp_esco_capable(hdev))
 			hci_setup_sync(sco, acl->handle);
 		else

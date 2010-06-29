@@ -315,7 +315,7 @@ static void unix_write_space(struct sock *sk)
 {
 	read_lock(&sk->sk_callback_lock);
 	if (unix_writable(sk)) {
-		if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+		if (sk_has_sleeper(sk))
 			wake_up_interruptible_sync(sk->sk_sleep);
 		sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
 	}
@@ -832,7 +832,7 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		 * All right, let's create it.
 		 */
 		mode = S_IFSOCK |
-		       (SOCK_INODE(sock)->i_mode & ~current->fs->umask);
+		       (SOCK_INODE(sock)->i_mode & ~current_umask());
 		err = mnt_want_write(nd.path.mnt);
 		if (err)
 			goto out_mknod_dput;
@@ -1178,8 +1178,7 @@ out_unlock:
 		unix_state_unlock(other);
 
 out:
-	if (skb)
-		kfree_skb(skb);
+	kfree_skb(skb);
 	if (newsk)
 		unix_release_sock(newsk, 0);
 	if (other)
@@ -1947,7 +1946,7 @@ static int unix_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case SIOCOUTQ:
-		amount = atomic_read(&sk->sk_wmem_alloc);
+		amount = sk_wmem_alloc_get(sk);
 		err = put_user(amount, (int __user *)arg);
 		break;
 	case SIOCINQ:
@@ -1986,7 +1985,7 @@ static unsigned int unix_poll(struct file *file, struct socket *sock, poll_table
 	struct sock *sk = sock->sk;
 	unsigned int mask;
 
-	poll_wait(file, sk->sk_sleep, wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	/* exceptional events? */
@@ -2023,7 +2022,7 @@ static unsigned int unix_dgram_poll(struct file *file, struct socket *sock,
 	struct sock *sk = sock->sk, *other;
 	unsigned int mask, writable;
 
-	poll_wait(file, sk->sk_sleep, wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	/* exceptional events? */
@@ -2054,7 +2053,7 @@ static unsigned int unix_dgram_poll(struct file *file, struct socket *sock,
 		other = unix_peer_get(sk);
 		if (other) {
 			if (unix_peer(other) != sk) {
-				poll_wait(file, &unix_sk(other)->peer_wait,
+				sock_poll_wait(file, &unix_sk(other)->peer_wait,
 					  wait);
 				if (unix_recvq_full(other))
 					writable = 0;

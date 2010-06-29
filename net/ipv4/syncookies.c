@@ -161,13 +161,12 @@ static __u16 const msstab[] = {
  */
 __u32 cookie_v4_init_sequence(struct sock *sk, struct sk_buff *skb, __u16 *mssp)
 {
-	struct tcp_sock *tp = tcp_sk(sk);
 	const struct iphdr *iph = ip_hdr(skb);
 	const struct tcphdr *th = tcp_hdr(skb);
 	int mssind;
 	const __u16 mss = *mssp;
 
-	tp->last_synq_overflow = jiffies;
+	tcp_synq_overflow(sk);
 
 	/* XXX sort msstab[] by probability?  Binary search? */
 	for (mssind = 0; mss > msstab[mssind + 1]; mssind++)
@@ -268,7 +267,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	if (!sysctl_tcp_syncookies || !th->ack)
 		goto out;
 
-	if (time_after(jiffies, tp->last_synq_overflow + TCP_TIMEOUT_INIT) ||
+	if (tcp_synq_no_recent_overflow(sk) ||
 	    (mss = cookie_check(skb, cookie)) == 0) {
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESFAILED);
 		goto out;
@@ -288,10 +287,6 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	if (!req)
 		goto out;
 
-	if (security_inet_conn_request(sk, skb, req)) {
-		reqsk_free(req);
-		goto out;
-	}
 	ireq = inet_rsk(req);
 	treq = tcp_rsk(req);
 	treq->rcv_isn		= ntohl(th->seq) - 1;
@@ -320,6 +315,11 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 			kfree(ireq->opt);
 			ireq->opt = NULL;
 		}
+	}
+
+	if (security_inet_conn_request(sk, skb, req)) {
+		reqsk_free(req);
+		goto out;
 	}
 
 	req->expires	= 0UL;

@@ -83,6 +83,13 @@ static int try_to_freeze_tasks(bool sig_only)
 		 * and caller must call thaw_processes() if something fails),
 		 * but it cleans up leftover PF_FREEZE requests.
 		 */
+#if 0		 
+		printk("\n");
+		printk(KERN_ERR "Freezing of tasks failed after %d.%02d seconds "
+				"(%d tasks refusing to freeze):\n",
+				elapsed_csecs / 100, elapsed_csecs % 100, todo);
+		show_state();
+#endif
 		if(wakeup) {
 			printk("\n");
 			printk(KERN_ERR "Freezing of %s aborted\n",
@@ -130,9 +137,12 @@ int freeze_processes(void)
 	if (error)
 		goto Exit;
 	printk("done.");
+
+	oom_killer_disable();
  Exit:
 	BUG_ON(in_atomic());
 	printk("\n");
+
 	return error;
 }
 
@@ -158,6 +168,8 @@ static void thaw_tasks(bool nosig_only)
 
 void thaw_processes(void)
 {
+	oom_killer_enable();
+
 	printk("Restarting tasks ... ");
 	thaw_tasks(true);
 	thaw_tasks(false);

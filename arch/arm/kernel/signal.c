@@ -133,7 +133,7 @@ sys_sigaction(int sig, const struct old_sigaction __user *act,
 }
 
 #ifdef CONFIG_CRUNCH
-static int preserve_crunch_context(struct crunch_sigframe *frame)
+static int preserve_crunch_context(struct crunch_sigframe __user *frame)
 {
 	char kbuf[sizeof(*frame) + 8];
 	struct crunch_sigframe *kframe;
@@ -146,7 +146,7 @@ static int preserve_crunch_context(struct crunch_sigframe *frame)
 	return __copy_to_user(frame, kframe, sizeof(*frame));
 }
 
-static int restore_crunch_context(struct crunch_sigframe *frame)
+static int restore_crunch_context(struct crunch_sigframe __user *frame)
 {
 	char kbuf[sizeof(*frame) + 8];
 	struct crunch_sigframe *kframe;
@@ -426,9 +426,13 @@ setup_return(struct pt_regs *regs, struct k_sigaction *ka,
 		 */
 		thumb = handler & 1;
 
-		if (thumb)
+		if (thumb) {
 			cpsr |= PSR_T_BIT;
-		else
+#if __LINUX_ARM_ARCH__ >= 7
+			/* clear the If-Then Thumb-2 execution state */
+			cpsr &= ~PSR_IT_MASK;
+#endif
+		} else
 			cpsr &= ~PSR_T_BIT;
 	}
 #endif
@@ -532,16 +536,17 @@ setup_rt_frame(int usig, struct k_sigaction *ka, siginfo_t *info,
 	return err;
 }
 
-static inline void restart_syscall(struct pt_regs *regs)
+static inline void setup_syscall_restart(struct pt_regs *regs)
 {
 	if (regs->ARM_ORIG_r0 == -ERESTARTNOHAND ||
-	    regs->ARM_ORIG_r0 == -ERESTARTSYS ||
-	    regs->ARM_ORIG_r0 == -ERESTARTNOINTR ||
-	    regs->ARM_ORIG_r0 == -ERESTART_RESTARTBLOCK) {
+		regs->ARM_ORIG_r0 == -ERESTARTSYS ||
+		regs->ARM_ORIG_r0 == -ERESTARTNOINTR ||
+		regs->ARM_ORIG_r0 == -ERESTART_RESTARTBLOCK) {
 		/* the syscall cannot be safely restarted, return -EINTR instead */
 		regs->ARM_r0 = -EINTR;
 		return;
 	}
+
 	regs->ARM_r0 = regs->ARM_ORIG_r0;
 	regs->ARM_pc -= thumb_mode(regs) ? 2 : 4;
 }
@@ -575,7 +580,7 @@ handle_signal(unsigned long sig, struct k_sigaction *ka,
 			}
 			/* fallthrough */
 		case -ERESTARTNOINTR:
-			restart_syscall(regs);
+			setup_syscall_restart(regs);
 		}
 	}
 
@@ -658,7 +663,7 @@ static int do_signal(sigset_t *oldset, struct pt_regs *regs, int syscall)
 	 */
 	if (syscall) {
 		if (regs->ARM_r0 == -ERESTART_RESTARTBLOCK) {
-			regs->ARM_r0 = -EAGAIN; /* prevent multiple restarts */
+			regs->ARM_r0 = -EAGAIN; 	/* prevent multiple restarts */
 			if (thumb_mode(regs)) {
 				regs->ARM_r7 = __NR_restart_syscall - __NR_SYSCALL_BASE;
 				regs->ARM_pc -= 2;
@@ -700,7 +705,7 @@ static int do_signal(sigset_t *oldset, struct pt_regs *regs, int syscall)
 		if (regs->ARM_r0 == -ERESTARTNOHAND ||
 		    regs->ARM_r0 == -ERESTARTSYS ||
 		    regs->ARM_r0 == -ERESTARTNOINTR) {
-			restart_syscall(regs);
+			setup_syscall_restart(regs);
 		}
 	}
 	single_step_set(current);

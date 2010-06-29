@@ -27,8 +27,6 @@
 #include <linux/ppp_channel.h>
 #endif /* __KERNEL__ */
 #include <linux/if_pppol2tp.h>
-#include <linux/if_pppolac.h>
-#include <linux/if_pppopns.h>
 
 /* For user-space programs to pick up these definitions
  * which they wouldn't get otherwise without defining __KERNEL__
@@ -53,9 +51,7 @@ struct pppoe_addr{
  */ 
 #define PX_PROTO_OE    0 /* Currently just PPPoE */
 #define PX_PROTO_OL2TP 1 /* Now L2TP also */
-#define PX_PROTO_OLAC  2
-#define PX_PROTO_OPNS  3
-#define PX_MAX_PROTO   4
+#define PX_MAX_PROTO   2
 
 struct sockaddr_pppox { 
        sa_family_t     sa_family;            /* address family, AF_PPPOX */ 
@@ -99,16 +95,16 @@ struct pppoe_tag {
 } __attribute ((packed));
 
 /* Tag identifiers */
-#define PTT_EOL		__constant_htons(0x0000)
-#define PTT_SRV_NAME	__constant_htons(0x0101)
-#define PTT_AC_NAME	__constant_htons(0x0102)
-#define PTT_HOST_UNIQ	__constant_htons(0x0103)
-#define PTT_AC_COOKIE	__constant_htons(0x0104)
-#define PTT_VENDOR 	__constant_htons(0x0105)
-#define PTT_RELAY_SID	__constant_htons(0x0110)
-#define PTT_SRV_ERR     __constant_htons(0x0201)
-#define PTT_SYS_ERR  	__constant_htons(0x0202)
-#define PTT_GEN_ERR  	__constant_htons(0x0203)
+#define PTT_EOL		__cpu_to_be16(0x0000)
+#define PTT_SRV_NAME	__cpu_to_be16(0x0101)
+#define PTT_AC_NAME	__cpu_to_be16(0x0102)
+#define PTT_HOST_UNIQ	__cpu_to_be16(0x0103)
+#define PTT_AC_COOKIE	__cpu_to_be16(0x0104)
+#define PTT_VENDOR 	__cpu_to_be16(0x0105)
+#define PTT_RELAY_SID	__cpu_to_be16(0x0110)
+#define PTT_SRV_ERR     __cpu_to_be16(0x0201)
+#define PTT_SYS_ERR  	__cpu_to_be16(0x0202)
+#define PTT_GEN_ERR  	__cpu_to_be16(0x0203)
 
 struct pppoe_hdr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -145,19 +141,6 @@ struct pppoe_opt {
 					     relayed to (PPPoE relaying) */
 };
 
-struct pppolac_opt {
-	__u32	local;
-	__u32	remote;
-	__u16	sequence;
-	__u8	sequencing;
-};
-
-struct pppopns_opt {
-	__u16	local;
-	__u16	remote;
-	__u32	sequence;
-};
-
 #include <net/sock.h>
 
 struct pppox_sock {
@@ -167,8 +150,6 @@ struct pppox_sock {
 	struct pppox_sock	*next;	  /* for hash table */
 	union {
 		struct pppoe_opt pppoe;
-		struct pppolac_opt lac;
-		struct pppopns_opt pns;
 	} proto;
 	__be16			num;
 };

@@ -2674,7 +2674,7 @@ static int skge_down(struct net_device *dev)
 	if (netif_msg_ifdown(skge))
 		printk(KERN_INFO PFX "%s: disabling interface\n", dev->name);
 
-	netif_stop_queue(dev);
+	netif_tx_disable(dev);
 
 	if (hw->chip_id == CHIP_ID_GENESIS && hw->phy_type == SK_PHY_XMAC)
 		del_timer_sync(&skge->link_timer);
@@ -2837,8 +2837,6 @@ static int skge_xmit_frame(struct sk_buff *skb, struct net_device *dev)
 		netif_stop_queue(dev);
 	}
 
-	dev->trans_start = jiffies;
-
 	return NETDEV_TX_OK;
 }
 
@@ -2881,7 +2879,6 @@ static void skge_tx_clean(struct net_device *dev)
 	}
 
 	skge->tx_ring.to_clean = e;
-	netif_wake_queue(dev);
 }
 
 static void skge_tx_timeout(struct net_device *dev)
@@ -2893,6 +2890,7 @@ static void skge_tx_timeout(struct net_device *dev)
 
 	skge_write8(skge->hw, Q_ADDR(txqaddr[skge->port], Q_CSR), CSR_STOP);
 	skge_tx_clean(dev);
+	netif_wake_queue(dev);
 }
 
 static int skge_change_mtu(struct net_device *dev, int new_mtu)
@@ -3214,7 +3212,7 @@ static int skge_poll(struct napi_struct *napi, int to_do)
 		unsigned long flags;
 
 		spin_lock_irqsave(&hw->hw_lock, flags);
-		__netif_rx_complete(napi);
+		__napi_complete(napi);
 		hw->intr_mask |= napimask[skge->port];
 		skge_write32(hw, B0_IMSK, hw->intr_mask);
 		skge_read32(hw, B0_IMSK);
@@ -3377,7 +3375,7 @@ static irqreturn_t skge_intr(int irq, void *dev_id)
 	if (status & (IS_XA1_F|IS_R1_F)) {
 		struct skge_port *skge = netdev_priv(hw->dev[0]);
 		hw->intr_mask &= ~(IS_XA1_F|IS_R1_F);
-		netif_rx_schedule(&skge->napi);
+		napi_schedule(&skge->napi);
 	}
 
 	if (status & IS_PA_TO_TX1)
@@ -3397,7 +3395,7 @@ static irqreturn_t skge_intr(int irq, void *dev_id)
 
 		if (status & (IS_XA2_F|IS_R2_F)) {
 			hw->intr_mask &= ~(IS_XA2_F|IS_R2_F);
-			netif_rx_schedule(&skge->napi);
+			napi_schedule(&skge->napi);
 		}
 
 		if (status & IS_PA_TO_RX2) {
@@ -3856,8 +3854,10 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 	skge->speed = -1;
 	skge->advertising = skge_supported_modes(hw);
 
-	if (device_may_wakeup(&hw->pdev->dev))
+	if (device_can_wakeup(&hw->pdev->dev)) {
 		skge->wol = wol_supported(hw) & WAKE_MAGIC;
+		device_set_wakeup_enable(&hw->pdev->dev, skge->wol);
+	}
 
 	hw->dev[port] = dev;
 
@@ -3912,12 +3912,12 @@ static int __devinit skge_probe(struct pci_dev *pdev,
 
 	pci_set_master(pdev);
 
-	if (!pci_set_dma_mask(pdev, DMA_64BIT_MASK)) {
+	if (!pci_set_dma_mask(pdev, DMA_BIT_MASK(64))) {
 		using_dac = 1;
-		err = pci_set_consistent_dma_mask(pdev, DMA_64BIT_MASK);
-	} else if (!(err = pci_set_dma_mask(pdev, DMA_32BIT_MASK))) {
+		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
+	} else if (!(err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32)))) {
 		using_dac = 0;
-		err = pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK);
+		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
 	}
 
 	if (err) {

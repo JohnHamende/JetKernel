@@ -137,6 +137,8 @@ struct hci_dev {
 	struct device		*parent;
 	struct device		dev;
 
+	struct rfkill		*rfkill;
+
 	struct module 		*owner;
 
 	int (*open)(struct hci_dev *hdev);
@@ -171,6 +173,7 @@ struct hci_conn {
 	__u8             auth_type;
 	__u8             sec_level;
 	__u8             power_save;
+	__u16            disc_timeout;
 	unsigned long	 pend;
 
 	unsigned int	 sent;
@@ -349,9 +352,9 @@ static inline void hci_conn_put(struct hci_conn *conn)
 		if (conn->type == ACL_LINK) {
 			del_timer(&conn->idle_timer);
 			if (conn->state == BT_CONNECTED) {
-				timeo = msecs_to_jiffies(HCI_DISCONN_TIMEOUT);
+				timeo = msecs_to_jiffies(conn->disc_timeout);
 				if (!conn->out)
-					timeo *= 20;
+					timeo *= 2;
 			} else
 				timeo = msecs_to_jiffies(10);
 		} else
@@ -456,6 +459,7 @@ int hci_recv_fragment(struct hci_dev *hdev, int type, void *data, int count);
 
 int hci_register_sysfs(struct hci_dev *hdev);
 void hci_unregister_sysfs(struct hci_dev *hdev);
+void hci_conn_init_sysfs(struct hci_conn *conn);
 void hci_conn_add_sysfs(struct hci_conn *conn);
 void hci_conn_del_sysfs(struct hci_conn *conn);
 

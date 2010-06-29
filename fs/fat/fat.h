@@ -76,10 +76,10 @@ struct msdos_sb_info {
 	const void *dir_ops;		     /* Opaque; default directory operations */
 	int dir_per_block;	     /* dir entries per block */
 	int dir_per_block_bits;	     /* log2(dir_per_block) */
-	unsigned long vol_id;        /* volume ID */
 
 	int fatent_shift;
 	struct fatent_operations *fatent_ops;
+	struct inode *fat_inode;
 
 	spinlock_t inode_hash_lock;
 	struct hlist_head inode_hashtable[FAT_HASH_SIZE];
@@ -257,6 +257,7 @@ struct fat_entry {
 	} u;
 	int nr_bhs;
 	struct buffer_head *bhs[2];
+	struct inode *fat_inode;
 };
 
 static inline void fatent_init(struct fat_entry *fatent)
@@ -265,6 +266,7 @@ static inline void fatent_init(struct fat_entry *fatent)
 	fatent->entry = 0;
 	fatent->u.ent32_p = NULL;
 	fatent->bhs[0] = fatent->bhs[1] = NULL;
+	fatent->fat_inode = NULL;
 }
 
 static inline void fatent_set_entry(struct fat_entry *fatent, int entry)
@@ -281,6 +283,7 @@ static inline void fatent_brelse(struct fat_entry *fatent)
 		brelse(fatent->bhs[i]);
 	fatent->nr_bhs = 0;
 	fatent->bhs[0] = fatent->bhs[1] = NULL;
+	fatent->fat_inode = NULL;
 }
 
 extern void fat_ent_access_init(struct super_block *sb);
@@ -302,6 +305,8 @@ extern int fat_setattr(struct dentry * dentry, struct iattr * attr);
 extern void fat_truncate(struct inode *inode);
 extern int fat_getattr(struct vfsmount *mnt, struct dentry *dentry,
 		       struct kstat *stat);
+extern int fat_file_fsync(struct file *file, struct dentry *dentry,
+			  int datasync);
 
 /* fat/inode.c */
 extern void fat_attach(struct inode *inode, loff_t i_pos);

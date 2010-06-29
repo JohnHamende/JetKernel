@@ -24,11 +24,19 @@
 
 #include <mach/hardware.h>
 #include <plat/gpio-cfg.h>
-#ifdef CONFIG_S3C_DMA_PL080_SOL
-#include <plat/s3c6410-dma.h>
-#endif
+//#ifdef CONFIG_S3C_DMA_PL080_SOL
+//#include <plat/s3c6410-dma.h>
+//#endif
+//#include "s3c-pcm.h"
+//#include "s3c6410-i2s.h"
+#include <mach/s3c-dma.h> //bss
+#include <plat/regs-iis.h> //bss
+#include <mach/gpio.h>
+
 #include "s3c-pcm.h"
 #include "s3c6410-i2s.h"
+
+#include "mach/volans.h"
 
 //#define CONFIG_SND_DEBUG
 #ifdef CONFIG_SND_DEBUG
@@ -287,7 +295,7 @@ static int s3c_i2s_hw_params(struct snd_pcm_substream *substream,
 	writel(iismod, s3c_i2s.regs + S3C_IISMOD);
 
 
-	debug_msg("s3c iis mode: 0x%08x\n", readl(s3c6410_i2s.regs + S3C64XX_IIS0MOD));
+	debug_msg("s3c iis mode: 0x%08x\n", readl(s3c_i2s.regs + S3C64XX_IIS0MOD));
 	debug_msg("s3c: params_channels %d\n", params_channels(params));
 	debug_msg("s3c: params_format %d\n", params_format(params));
 	debug_msg("s3c: params_subformat %d\n", params_subformat(params));

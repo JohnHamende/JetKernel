@@ -54,7 +54,7 @@ static inline int kvm_mmu_reload(struct kvm_vcpu *vcpu)
 static inline int is_long_mode(struct kvm_vcpu *vcpu)
 {
 #ifdef CONFIG_X86_64
-	return vcpu->arch.shadow_efer & EFER_LME;
+	return vcpu->arch.shadow_efer & EFER_LMA;
 #else
 	return 0;
 #endif
@@ -73,6 +73,11 @@ static inline int is_pse(struct kvm_vcpu *vcpu)
 static inline int is_paging(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.cr0 & X86_CR0_PG;
+}
+
+static inline int is_present_pte(unsigned long pte)
+{
+	return pte & PT_PRESENT_MASK;
 }
 
 #endif

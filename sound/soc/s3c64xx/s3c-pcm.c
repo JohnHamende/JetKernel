@@ -34,8 +34,9 @@
 #include <asm/dma.h>
 #include <asm/io.h>
 #include <mach/hardware.h>
-#include <plat/dma.h>
+//#include <plat/dma.h>
 #include <mach/audio.h>
+#include <mach/s3c-dma.h>
 
 #include "s3c-pcm.h"
 

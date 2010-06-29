@@ -67,7 +67,7 @@ void s3c_sdhci1_set_platdata(struct s3c_sdhci_platdata *pd)
 	if (pd->cfg_card)
 		set->cfg_card = pd->cfg_card;
 	if (pd->cfg_ext_cd)
-		set->cfg_ext_cd = pd->cfg_ext_cd;
+		set->cfg_ext_cd = pd->cfg_ext_cd; 
 	if (pd->detect_ext_cd)
 		set->detect_ext_cd = pd->detect_ext_cd;
 	if (pd->ext_cd)

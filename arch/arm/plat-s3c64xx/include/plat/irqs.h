@@ -1,4 +1,4 @@
-/* linux/arch/arm/plat-s3c64xx/include/plat/irqs.h
+/* linux/arch/arm/plat-s3c64xx/include/mach/irqs.h
  *
  * Copyright 2008 Openmoko, Inc.
  * Copyright 2008 Simtec Electronics
@@ -117,13 +117,13 @@
 #define IRQ_ONENAND1		S3C64XX_IRQ_VIC1(12)
 #define IRQ_NFC			S3C64XX_IRQ_VIC1(13)
 #define IRQ_CFCON		S3C64XX_IRQ_VIC1(14)
-#define IRQ_UHOST		S3C64XX_IRQ_VIC1(15)
+#define IRQ_USBH		S3C64XX_IRQ_VIC1(15)
 #define IRQ_SPI0		S3C64XX_IRQ_VIC1(16)
 #define IRQ_SPI1		S3C64XX_IRQ_VIC1(17)
 #define IRQ_IIC			S3C64XX_IRQ_VIC1(18)
 #define IRQ_HSItx		S3C64XX_IRQ_VIC1(19)
 #define IRQ_HSIrx		S3C64XX_IRQ_VIC1(20)
-#define IRQ_EINT_GROUPS		S3C64XX_IRQ_VIC1(21)
+#define IRQ_RESERVED		S3C64XX_IRQ_VIC1(21)
 #define IRQ_MSM			S3C64XX_IRQ_VIC1(22)
 #define IRQ_HOSTIF		S3C64XX_IRQ_VIC1(23)
 #define IRQ_HSMMC0		S3C64XX_IRQ_VIC1(24)
@@ -157,6 +157,7 @@
 
 #define S3C_EINT(x)		((x) + S3C_IRQ_EINT_BASE)
 #define IRQ_EINT(x)		S3C_EINT(x)
+#define IRQ_EINT_BIT(x)		((x) - S3C_EINT(0))
 
 /* Next the external interrupt groups. These are similar to the IRQ_EINT(x)
  * that they are sourced from the GPIO pins but with a different scheme for

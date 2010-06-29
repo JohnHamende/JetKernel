@@ -17,7 +17,6 @@
 #include <linux/module.h>
 #include <linux/vmalloc.h>
 #include <linux/completion.h>
-#include <linux/mnt_namespace.h>
 #include <linux/personality.h>
 #include <linux/mempolicy.h>
 #include <linux/sem.h>
@@ -60,7 +59,9 @@
 #include <linux/tty.h>
 #include <linux/proc_fs.h>
 #include <linux/blkdev.h>
-#include <trace/sched.h>
+#include <linux/fs_struct.h>
+#include <linux/magic.h>
+#include <linux/perf_counter.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -68,6 +69,8 @@
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+
+#include <trace/events/sched.h>
 
 /*
  * Protected counters by write_lock_irq(&tasklist_lock)
@@ -80,8 +83,6 @@ int max_threads;		/* tunable limit on nr_threads */
 DEFINE_PER_CPU(unsigned long, process_counts) = 0;
 
 __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
-
-DEFINE_TRACE(sched_process_fork);
 
 int nr_processes(void)
 {
@@ -176,7 +177,7 @@ void __init fork_init(unsigned long mempages)
 	/* create a slab on which task_structs can be allocated */
 	task_struct_cachep =
 		kmem_cache_create("task_struct", sizeof(struct task_struct),
-			ARCH_MIN_TASKALIGN, SLAB_PANIC, NULL);
+			ARCH_MIN_TASKALIGN, SLAB_PANIC | SLAB_NOTRACK, NULL);
 #endif
 
 	/* do the arch specific task caches init */
@@ -212,6 +213,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 {
 	struct task_struct *tsk;
 	struct thread_info *ti;
+	unsigned long *stackend;
+
 	int err;
 
 	prepare_to_copy(orig);
@@ -237,6 +240,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 		goto out;
 
 	setup_thread_stack(tsk, orig);
+	stackend = end_of_stack(tsk);
+	*stackend = STACK_END_MAGIC;	/* for overflow detection */
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 	tsk->stack_canary = get_random_int();
@@ -279,7 +284,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 	mm->free_area_cache = oldmm->mmap_base;
 	mm->cached_hole_size = ~0UL;
 	mm->map_count = 0;
-	cpus_clear(mm->cpu_vm_mask);
+	cpumask_clear(mm_cpumask(mm));
 	mm->mm_rb = RB_ROOT;
 	rb_link = &mm->mm_rb.rb_node;
 	rb_parent = NULL;
@@ -562,18 +567,18 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 	 * the value intact in a core dump, and to save the unnecessary
 	 * trouble otherwise.  Userland only wants this done for a sys_exit.
 	 */
-	if (tsk->clear_child_tid
-	    && !(tsk->flags & PF_SIGNALED)
-	    && atomic_read(&mm->mm_users) > 1) {
-		u32 __user * tidptr = tsk->clear_child_tid;
+	if (tsk->clear_child_tid) {
+		if (!(tsk->flags & PF_SIGNALED) &&
+		    atomic_read(&mm->mm_users) > 1) {
+			/*
+			 * We don't check the error code - if userspace has
+			 * not set up a proper pointer then tough luck.
+			 */
+			put_user(0, tsk->clear_child_tid);
+			sys_futex(tsk->clear_child_tid, FUTEX_WAKE,
+					1, NULL, NULL, 0);
+		}
 		tsk->clear_child_tid = NULL;
-
-		/*
-		 * We don't check the error code - if userspace has
-		 * not set up a proper pointer then tough luck.
-		 */
-		put_user(0, tidptr);
-		sys_futex(tidptr, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
 }
 
@@ -639,6 +644,9 @@ static int copy_mm(unsigned long clone_flags, struct task_struct * tsk)
 
 	tsk->min_flt = tsk->maj_flt = 0;
 	tsk->nvcsw = tsk->nivcsw = 0;
+#ifdef CONFIG_DETECT_HUNG_TASK
+	tsk->last_switch_count = tsk->nvcsw + tsk->nivcsw;
+#endif
 
 	tsk->mm = NULL;
 	tsk->active_mm = NULL;
@@ -676,38 +684,21 @@ fail_nomem:
 	return retval;
 }
 
-static struct fs_struct *__copy_fs_struct(struct fs_struct *old)
-{
-	struct fs_struct *fs = kmem_cache_alloc(fs_cachep, GFP_KERNEL);
-	/* We don't need to lock fs - think why ;-) */
-	if (fs) {
-		atomic_set(&fs->count, 1);
-		rwlock_init(&fs->lock);
-		fs->umask = old->umask;
-		read_lock(&old->lock);
-		fs->root = old->root;
-		path_get(&old->root);
-		fs->pwd = old->pwd;
-		path_get(&old->pwd);
-		read_unlock(&old->lock);
-	}
-	return fs;
-}
-
-struct fs_struct *copy_fs_struct(struct fs_struct *old)
-{
-	return __copy_fs_struct(old);
-}
-
-EXPORT_SYMBOL_GPL(copy_fs_struct);
-
 static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
 {
+	struct fs_struct *fs = current->fs;
 	if (clone_flags & CLONE_FS) {
-		atomic_inc(&current->fs->count);
+		/* tsk->fs is already what we want */
+		write_lock(&fs->lock);
+		if (fs->in_exec) {
+			write_unlock(&fs->lock);
+			return -EAGAIN;
+		}
+		fs->users++;
+		write_unlock(&fs->lock);
 		return 0;
 	}
-	tsk->fs = __copy_fs_struct(current->fs);
+	tsk->fs = copy_fs_struct(fs);
 	if (!tsk->fs)
 		return -ENOMEM;
 	return 0;
@@ -808,6 +799,12 @@ static void posix_cpu_timers_init_group(struct signal_struct *sig)
 	sig->cputime_expires.virt_exp = cputime_zero;
 	sig->cputime_expires.sched_exp = 0;
 
+	if (sig->rlim[RLIMIT_CPU].rlim_cur != RLIM_INFINITY) {
+		sig->cputime_expires.prof_exp =
+			secs_to_cputime(sig->rlim[RLIMIT_CPU].rlim_cur);
+		sig->cputimer.running = 1;
+	}
+
 	/* The timer lists. */
 	INIT_LIST_HEAD(&sig->cpu_timers[0]);
 	INIT_LIST_HEAD(&sig->cpu_timers[1]);
@@ -818,16 +815,10 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 {
 	struct signal_struct *sig;
 
-	if (clone_flags & CLONE_THREAD) {
-		atomic_inc(&current->signal->count);
-		atomic_inc(&current->signal->live);
+	if (clone_flags & CLONE_THREAD)
 		return 0;
-	}
+
 	sig = kmem_cache_alloc(signal_cachep, GFP_KERNEL);
-
-	if (sig)
-		posix_cpu_timers_init_group(sig);
-
 	tsk->signal = sig;
 	if (!sig)
 		return -ENOMEM;
@@ -836,6 +827,8 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	atomic_set(&sig->live, 1);
 	init_waitqueue_head(&sig->wait_chldexit);
 	sig->flags = 0;
+	if (clone_flags & CLONE_NEWPID)
+		sig->flags |= SIGNAL_UNKILLABLE;
 	sig->group_exit_code = 0;
 	sig->group_exit_task = NULL;
 	sig->group_stop_count = 0;
@@ -865,6 +858,8 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	memcpy(sig->rlim, current->signal->rlim, sizeof sig->rlim);
 	task_unlock(current->group_leader);
 
+	posix_cpu_timers_init_group(sig);
+
 	acct_init_pacct(&sig->pacct);
 
 	tty_audit_fork(sig);
@@ -877,16 +872,6 @@ void __cleanup_signal(struct signal_struct *sig)
 	thread_group_cputime_free(sig);
 	tty_kref_put(sig->tty);
 	kmem_cache_free(signal_cachep, sig);
-}
-
-static void cleanup_signal(struct task_struct *tsk)
-{
-	struct signal_struct *sig = tsk->signal;
-
-	atomic_dec(&sig->live);
-
-	if (atomic_dec_and_test(&sig->count))
-		__cleanup_signal(sig);
 }
 
 static void copy_flags(unsigned long clone_flags, struct task_struct *p)
@@ -983,6 +968,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (!p)
 		goto fork_out;
 
+	ftrace_graph_init_task(p);
+
 	rt_mutex_init_task(p);
 
 #ifdef CONFIG_PROVE_LOCKING
@@ -1028,7 +1015,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->vfork_done = NULL;
 	spin_lock_init(&p->alloc_lock);
 
-	clear_tsk_thread_flag(p, TIF_SIGPENDING);
 	init_sigpending(&p->pending);
 
 	p->utime = cputime_zero;
@@ -1040,11 +1026,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->prev_stime = cputime_zero;
 
 	p->default_timer_slack_ns = current->timer_slack_ns;
-
-#ifdef CONFIG_DETECT_SOFTLOCKUP
-	p->last_switch_count = 0;
-	p->last_switch_timestamp = 0;
-#endif
 
 	task_io_accounting_init(&p->ioac);
 	acct_clear_integrals(p);
@@ -1095,11 +1076,15 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 #ifdef CONFIG_DEBUG_MUTEXES
 	p->blocked_on = NULL; /* not blocked yet */
 #endif
-	if (unlikely(current->ptrace))
-		ptrace_fork(p, clone_flags);
+
+	p->bts = NULL;
 
 	/* Perform scheduler related setup. Assign this task to a CPU. */
 	sched_fork(p, clone_flags);
+
+	retval = perf_counter_init_task(p);
+	if (retval)
+		goto bad_fork_cleanup_policy;
 
 	if ((retval = audit_alloc(p)))
 		goto bad_fork_cleanup_policy;
@@ -1120,7 +1105,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto bad_fork_cleanup_mm;
 	if ((retval = copy_io(clone_flags, p)))
 		goto bad_fork_cleanup_namespaces;
-	retval = copy_thread(0, clone_flags, stack_start, stack_size, p, regs);
+	retval = copy_thread(clone_flags, stack_start, stack_size, p, regs);
 	if (retval)
 		goto bad_fork_cleanup_io;
 
@@ -1137,8 +1122,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		}
 	}
 
-	ftrace_graph_init_task(p);
-
 	p->pid = pid_nr(pid);
 	p->tgid = p->pid;
 	if (clone_flags & CLONE_THREAD)
@@ -1147,7 +1130,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (current->nsproxy != p->nsproxy) {
 		retval = ns_cgroup_clone(p, pid);
 		if (retval)
-			goto bad_fork_free_graph;
+			goto bad_fork_free_pid;
 	}
 
 	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ? child_tidptr : NULL;
@@ -1210,7 +1193,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 * parent's CPU). This avoids alot of nasty races.
 	 */
 	p->cpus_allowed = current->cpus_allowed;
-	p->rt.nr_cpus_allowed = current->rt.nr_cpus_allowed;
 	if (unlikely(!cpu_isset(task_cpu(p), p->cpus_allowed) ||
 			!cpu_online(task_cpu(p))))
 		set_task_cpu(p, smp_processor_id());
@@ -1239,10 +1221,12 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		spin_unlock(&current->sighand->siglock);
 		write_unlock_irq(&tasklist_lock);
 		retval = -ERESTARTNOINTR;
-		goto bad_fork_free_graph;
+		goto bad_fork_free_pid;
 	}
 
 	if (clone_flags & CLONE_THREAD) {
+		atomic_inc(&current->signal->count);
+		atomic_inc(&current->signal->live);
 		p->group_leader = current->group_leader;
 		list_add_tail_rcu(&p->thread_group, &p->group_leader->thread_group);
 	}
@@ -1258,8 +1242,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			p->signal->leader_pid = pid;
 			tty_kref_put(p->signal->tty);
 			p->signal->tty = tty_kref_get(current->signal->tty);
-			set_task_pgrp(p, task_pgrp_nr(current));
-			set_task_session(p, task_session_nr(current));
 			attach_pid(p, PIDTYPE_PGID, task_pgrp(current));
 			attach_pid(p, PIDTYPE_SID, task_session(current));
 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
@@ -1274,10 +1256,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	write_unlock_irq(&tasklist_lock);
 	proc_fork_connector(p);
 	cgroup_post_fork(p);
+	perf_counter_fork(p);
 	return p;
 
-bad_fork_free_graph:
-	ftrace_graph_exit_task(p);
 bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
@@ -1289,7 +1270,8 @@ bad_fork_cleanup_mm:
 	if (p->mm)
 		mmput(p->mm);
 bad_fork_cleanup_signal:
-	cleanup_signal(p);
+	if (!(clone_flags & CLONE_THREAD))
+		__cleanup_signal(p->signal);
 bad_fork_cleanup_sighand:
 	__cleanup_sighand(p->sighand);
 bad_fork_cleanup_fs:
@@ -1301,6 +1283,7 @@ bad_fork_cleanup_semundo:
 bad_fork_cleanup_audit:
 	audit_free(p);
 bad_fork_cleanup_policy:
+	perf_counter_free_task(p);
 #ifdef CONFIG_NUMA
 	mpol_put(p->mempolicy);
 bad_fork_cleanup_cgroup:
@@ -1417,7 +1400,7 @@ long do_fork(unsigned long clone_flags,
 		}
 
 		audit_finish_fork(p);
-		tracehook_report_clone(trace, regs, clone_flags, nr, p);
+		tracehook_report_clone(regs, clone_flags, nr, p);
 
 		/*
 		 * We set PF_STARTING at creation in case tracing wants to
@@ -1469,20 +1452,21 @@ void __init proc_caches_init(void)
 {
 	sighand_cachep = kmem_cache_create("sighand_cache",
 			sizeof(struct sighand_struct), 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_DESTROY_BY_RCU,
-			sighand_ctor);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_DESTROY_BY_RCU|
+			SLAB_NOTRACK, sighand_ctor);
 	signal_cachep = kmem_cache_create("signal_cache",
 			sizeof(struct signal_struct), 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK, NULL);
 	files_cachep = kmem_cache_create("files_cache",
 			sizeof(struct files_struct), 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK, NULL);
 	fs_cachep = kmem_cache_create("fs_cache",
 			sizeof(struct fs_struct), 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK, NULL);
 	mm_cachep = kmem_cache_create("mm_struct",
 			sizeof(struct mm_struct), ARCH_MIN_MMSTRUCT_ALIGN,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_NOTRACK, NULL);
+	vm_area_cachep = KMEM_CACHE(vm_area_struct, SLAB_PANIC);
 	mmap_init();
 }
 
@@ -1538,12 +1522,16 @@ static int unshare_fs(unsigned long unshare_flags, struct fs_struct **new_fsp)
 {
 	struct fs_struct *fs = current->fs;
 
-	if ((unshare_flags & CLONE_FS) &&
-	    (fs && atomic_read(&fs->count) > 1)) {
-		*new_fsp = __copy_fs_struct(current->fs);
-		if (!*new_fsp)
-			return -ENOMEM;
-	}
+	if (!(unshare_flags & CLONE_FS) || !fs)
+		return 0;
+
+	/* don't need lock here; in the worst case we'll do useless copy */
+	if (fs->users == 1)
+		return 0;
+
+	*new_fsp = copy_fs_struct(fs);
+	if (!*new_fsp)
+		return -ENOMEM;
 
 	return 0;
 }
@@ -1659,8 +1647,13 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 
 		if (new_fs) {
 			fs = current->fs;
+			write_lock(&fs->lock);
 			current->fs = new_fs;
-			new_fs = fs;
+			if (--fs->users)
+				new_fs = NULL;
+			else
+				new_fs = fs;
+			write_unlock(&fs->lock);
 		}
 
 		if (new_mm) {
@@ -1699,7 +1692,7 @@ bad_unshare_cleanup_sigh:
 
 bad_unshare_cleanup_fs:
 	if (new_fs)
-		put_fs_struct(new_fs);
+		free_fs_struct(new_fs);
 
 bad_unshare_cleanup_thread:
 bad_unshare_out:

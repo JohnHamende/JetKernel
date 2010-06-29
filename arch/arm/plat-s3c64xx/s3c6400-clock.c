@@ -145,7 +145,7 @@ static unsigned long s3c64xx_clk_doutmpll_get_rate(struct clk *clk)
 	return rate;
 }
 
-static struct clk clk_dout_mpll = {
+struct clk clk_dout_mpll = { //removed static almar
 	.name		= "dout_mpll",
 	.id		= -1,
 	.parent		= &clk_mout_mpll.clk,
@@ -645,7 +645,7 @@ void __init s3c6400_register_clocks(void)
 
 	for (ptr = 0; ptr < ARRAY_SIZE(clks); ptr++) {
 		clkp = clks[ptr];
-		ret = s3c24xx_register_clock(clkp);
+		ret = s3c_register_clock(clkp);//s3c24xx_register_clock(clkp);
 		if (ret < 0) {
 			printk(KERN_ERR "Failed to register clock %s (%d)\n",
 			       clkp->name, ret);

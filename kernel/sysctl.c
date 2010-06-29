@@ -27,6 +27,7 @@
 #include <linux/security.h>
 #include <linux/ctype.h>
 #include <linux/utsname.h>
+#include <linux/kmemcheck.h>
 #include <linux/smp_lock.h>
 #include <linux/fs.h>
 #include <linux/init.h>
@@ -48,6 +49,9 @@
 #include <linux/acpi.h>
 #include <linux/reboot.h>
 #include <linux/ftrace.h>
+#include <linux/security.h>
+#include <linux/slow-work.h>
+#include <linux/perf_counter.h>
 
 #include <asm/uaccess.h>
 #include <asm/processor.h>
@@ -83,6 +87,8 @@ extern int percpu_pagelist_fraction;
 extern int compat_log;
 extern int latencytop_enabled;
 extern int sysctl_nr_open_min, sysctl_nr_open_max;
+extern int rr_interval;
+extern int sched_iso_cpu;
 #ifndef CONFIG_MMU
 extern int sysctl_nr_trim_pages;
 #endif
@@ -96,14 +102,15 @@ static int sixty = 60;
 static int neg_one = -1;
 #endif
 
-#if defined(CONFIG_MMU) && defined(CONFIG_FILE_LOCKING)
-static int two = 2;
-#endif
-
 static int zero;
-static int one = 1;
+static int __maybe_unused two = 2;
 static unsigned long one_ul = 1;
-static int one_hundred = 100;
+static int __read_mostly one = 1;
+static int __read_mostly one_hundred = 100;
+static int __read_mostly five_thousand = 5000;
+
+/* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
+static unsigned long dirty_bytes_min = 2 * PAGE_SIZE;
 
 /* this is needed for the proc_dointvec_minmax for [fs_]overflow UID and GID */
 static int maxolduid = 65535;
@@ -114,6 +121,7 @@ static int ngroups_max = NGROUPS_MAX;
 
 #ifdef CONFIG_MODULES
 extern char modprobe_path[];
+extern int modules_disabled;
 #endif
 #ifdef CONFIG_CHR_DEV_SG
 extern int sg_big_buff;
@@ -234,123 +242,7 @@ static struct ctl_table root_table[] = {
 	{ .ctl_name = 0 }
 };
 
-#ifdef CONFIG_SCHED_DEBUG
-static int min_sched_granularity_ns = 100000;		/* 100 usecs */
-static int max_sched_granularity_ns = NSEC_PER_SEC;	/* 1 second */
-static int min_wakeup_granularity_ns;			/* 0 usecs */
-static int max_wakeup_granularity_ns = NSEC_PER_SEC;	/* 1 second */
-#endif
-
 static struct ctl_table kern_table[] = {
-#ifdef CONFIG_SCHED_DEBUG
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_min_granularity_ns",
-		.data		= &sysctl_sched_min_granularity,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &sched_nr_latency_handler,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &min_sched_granularity_ns,
-		.extra2		= &max_sched_granularity_ns,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_latency_ns",
-		.data		= &sysctl_sched_latency,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &sched_nr_latency_handler,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &min_sched_granularity_ns,
-		.extra2		= &max_sched_granularity_ns,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_wakeup_granularity_ns",
-		.data		= &sysctl_sched_wakeup_granularity,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &min_wakeup_granularity_ns,
-		.extra2		= &max_wakeup_granularity_ns,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_shares_ratelimit",
-		.data		= &sysctl_sched_shares_ratelimit,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_shares_thresh",
-		.data		= &sysctl_sched_shares_thresh,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &zero,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_child_runs_first",
-		.data		= &sysctl_sched_child_runs_first,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_features",
-		.data		= &sysctl_sched_features,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_migration_cost",
-		.data		= &sysctl_sched_migration_cost,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_nr_migrate",
-		.data		= &sysctl_sched_nr_migrate,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-#endif
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_rt_period_us",
-		.data		= &sysctl_sched_rt_period,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &sched_rt_handler,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_rt_runtime_us",
-		.data		= &sysctl_sched_rt_runtime,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &sched_rt_handler,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "sched_compat_yield",
-		.data		= &sysctl_sched_compat_yield,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
 #ifdef CONFIG_PROVE_LOCKING
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -533,6 +425,17 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dostring,
 		.strategy	= &sysctl_string,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "modules_disabled",
+		.data		= &modules_disabled,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		/* only handle a transition from default "0" to "1" */
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &one,
 	},
 #endif
 #if defined(CONFIG_HOTPLUG) && defined(CONFIG_NET)
@@ -722,9 +625,25 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "panic_on_io_nmi",
+		.data		= &panic_on_io_nmi,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
 		.ctl_name	= KERN_BOOTLOADER_TYPE,
 		.procname	= "bootloader_type",
 		.data		= &bootloader_type,
+		.maxlen		= sizeof (int),
+		.mode		= 0444,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "bootloader_version",
+		.data		= &bootloader_version,
 		.maxlen		= sizeof (int),
 		.mode		= 0444,
 		.proc_handler	= &proc_dointvec,
@@ -756,6 +675,28 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "rr_interval",
+		.data		= &rr_interval,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &one,
+		.extra2		= &five_thousand,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "iso_cpu",
+		.data		= &sched_iso_cpu,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
+		.extra2		= &one_hundred,
+	},
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)
 	{
 		.ctl_name	= KERN_SPIN_RETRY,
@@ -816,6 +757,19 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &neg_one,
 		.extra2		= &sixty,
 	},
+#endif
+#ifdef CONFIG_DETECT_HUNG_TASK
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "hung_task_panic",
+		.data		= &sysctl_hung_task_panic,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "hung_task_check_count",
@@ -831,7 +785,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_hung_task_timeout_secs,
 		.maxlen		= sizeof(unsigned long),
 		.mode		= 0644,
-		.proc_handler	= &proc_doulongvec_minmax,
+		.proc_handler	= &proc_dohung_task_timeout_secs,
 		.strategy	= &sysctl_intvec,
 	},
 	{
@@ -891,16 +845,51 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = &proc_dointvec,
 	},
 #endif
-#ifdef CONFIG_UNEVICTABLE_LRU
+#ifdef CONFIG_SLOW_WORK
 	{
 		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "scan_unevictable_pages",
-		.data		= &scan_unevictable_pages,
-		.maxlen		= sizeof(scan_unevictable_pages),
-		.mode		= 0644,
-		.proc_handler	= &scan_unevictable_handler,
+		.procname	= "slow-work",
+		.mode		= 0555,
+		.child		= slow_work_sysctls,
 	},
 #endif
+#ifdef CONFIG_PERF_COUNTERS
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "perf_counter_paranoid",
+		.data		= &sysctl_perf_counter_paranoid,
+		.maxlen		= sizeof(sysctl_perf_counter_paranoid),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "perf_counter_mlock_kb",
+		.data		= &sysctl_perf_counter_mlock,
+		.maxlen		= sizeof(sysctl_perf_counter_mlock),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "perf_counter_max_sample_rate",
+		.data		= &sysctl_perf_counter_sample_rate,
+		.maxlen		= sizeof(sysctl_perf_counter_sample_rate),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_KMEMCHECK
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "kmemcheck",
+		.data		= &kmemcheck_enabled,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
+
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt
@@ -997,7 +986,7 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &dirty_bytes_handler,
 		.strategy	= &sysctl_intvec,
-		.extra1		= &one_ul,
+		.extra1		= &dirty_bytes_min,
 	},
 	{
 		.procname	= "dirty_writeback_centisecs",
@@ -1011,7 +1000,7 @@ static struct ctl_table vm_table[] = {
 		.data		= &dirty_expire_interval,
 		.maxlen		= sizeof(dirty_expire_interval),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_userhz_jiffies,
+		.proc_handler	= &proc_dointvec,
 	},
 	{
 		.ctl_name	= VM_NR_PDFLUSH_THREADS,
@@ -1101,7 +1090,7 @@ static struct ctl_table vm_table[] = {
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "min_free_order_shift",
 		.data		= &min_free_order_shift,
-		.maxlen		= sizeof(min_free_order_shift),
+		.maxlen 	= sizeof(min_free_order_shift),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec
 	},
@@ -1225,10 +1214,10 @@ static struct ctl_table vm_table[] = {
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "mmap_min_addr",
-		.data		= &mmap_min_addr,
-		.maxlen         = sizeof(unsigned long),
+		.data		= &dac_mmap_min_addr,
+		.maxlen		= sizeof(unsigned long),
 		.mode		= 0644,
-		.proc_handler	= &proc_doulongvec_minmax,
+		.proc_handler	= &mmap_min_addr_handler,
 	},
 #ifdef CONFIG_NUMA
 	{
@@ -1267,6 +1256,14 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one,
 	},
 #endif
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "scan_unevictable_pages",
+		.data		= &scan_unevictable_pages,
+		.maxlen		= sizeof(scan_unevictable_pages),
+		.mode		= 0644,
+		.proc_handler	= &scan_unevictable_handler,
+	},
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt
@@ -1380,10 +1377,7 @@ static struct ctl_table fs_table[] = {
 		.data		= &lease_break_time,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec,
-		.extra1		= &zero,
-		.extra2		= &two,
+		.proc_handler	= &proc_dointvec,
 	},
 #endif
 #ifdef CONFIG_AIO
@@ -1424,7 +1418,10 @@ static struct ctl_table fs_table[] = {
 		.data		= &suid_dumpable,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &zero,
+		.extra2		= &two,
 	},
 #if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
 	{
@@ -2205,7 +2202,7 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 		  void *data)
 {
 #define TMPBUFLEN 21
-	int *i, vleft, first=1, neg, val;
+	int *i, vleft, first = 1, neg;
 	unsigned long lval;
 	size_t left, len;
 	
@@ -2258,8 +2255,6 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 			len = p-buf;
 			if ((len < left) && *p && !isspace(*p))
 				break;
-			if (neg)
-				val = -val;
 			s += len;
 			left -= len;
 

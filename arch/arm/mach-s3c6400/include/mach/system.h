@@ -14,9 +14,14 @@
 #include <linux/io.h>
 #include <mach/map.h>
 #include <plat/regs-watchdog.h>
+#include <plat/watchdog-reset.h>
 
 void (*s3c64xx_idle)(void);
 void (*s3c64xx_reset_hook)(void);
+
+
+//extern void __iomem *s3c6410_wdt_addr;
+
 
 void s3c64xx_default_idle(void)
 {
@@ -31,25 +36,39 @@ static void arch_idle(void)
 		s3c64xx_default_idle();
 }
 
-void arch_reset(char mode)
+void arch_reset(char mode, const char *cmd)
 {
-	void __iomem	*wdt_reg;
 
-	wdt_reg = ioremap(S3C64XX_PA_WATCHDOG,S3C64XX_SZ_WATCHDOG);
+
+	if (mode != 's')
+		arch_wdt_reset();
+
+	/* if all else fails, or mode was for soft, jump to 0 */
+	cpu_reset(0);
+//	void __iomem	*wdt_reg = s3c6410_wdt_addr;
+
+//	printk(KERN_ERR ">>Watchdog reset tried to assert reset\n");
+//	mdelay(50);
+
+//	if (!wdt_reg ){
+		//wdt_reg = ioremap(S3C64XX_PA_WATCHDOG,S3C64XX_SZ_WATCHDOG);
+//		while(1);
+//		}
+
 
 	/* nothing here yet */
 
-	writel(S3C_WTCNT_CNT, wdt_reg + S3C_WTCNT_OFFSET);	/* Watchdog Count Register*/
-	writel(S3C_WTCNT_CON, wdt_reg + S3C_WTCON_OFFSET);	/* Watchdog Controller Register*/
-	writel(S3C_WTCNT_DAT, wdt_reg + S3C_WTDAT_OFFSET);	/* Watchdog Data Register*/
+//	writel(S3C_WTCNT_CNT, wdt_reg + S3C_WTCNT_OFFSET);	/* Watchdog Count Register*/
+//	writel(S3C_WTCNT_CON, wdt_reg + S3C_WTCON_OFFSET);	/* Watchdog Controller Register*/
+//	writel(S3C_WTCNT_DAT, wdt_reg + S3C_WTDAT_OFFSET);	/* Watchdog Data Register*/
 
 	/* wait for reset to assert... */
-	mdelay(500);
+//	mdelay(500);
 
-	printk(KERN_ERR "Watchdog reset failed to assert reset\n");
+//	printk(KERN_ERR "<<Watchdog reset failed to assert reset\n");
 
 	/* delay to allow the serial port to show the message */
-	mdelay(50);
+//	mdelay(50);
 }
 
 #endif /* __ASM_ARCH_IRQ_H */

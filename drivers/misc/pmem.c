@@ -186,7 +186,7 @@ static int get_id(struct file *file)
 	return MINOR(file->f_dentry->d_inode->i_rdev);
 }
 
-int is_pmem_file(struct file *file)
+static int is_pmem_file(struct file *file)
 {
 	int id;
 
@@ -795,7 +795,7 @@ void flush_pmem_file(struct file *file, unsigned long offset, unsigned long len)
 
 	id = get_id(file);
 	data = (struct pmem_data *)file->private_data;
-	if (!pmem[id].cached || file->f_flags & O_SYNC)
+	if (!pmem[id].cached)
 		return;
 
 	down_read(&data->sem);
@@ -1087,8 +1087,8 @@ static long pmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				region.offset = pmem_start_addr(id, data);
 				region.len = pmem_len(id, data);
 			}
-//			printk(KERN_INFO "pmem: request for physical address of pmem region "
-//					"from process %d.\n", current->pid);
+			printk(KERN_INFO "pmem: request for physical address of pmem region "
+					"from process %d.\n", current->pid);
 			if (copy_to_user((void __user *)arg, &region,
 						sizeof(struct pmem_region)))
 				return -EFAULT;

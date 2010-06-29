@@ -187,6 +187,9 @@ static int ocfs2_sync_file(struct file *file,
 	if (err)
 		goto bail;
 
+	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
+		goto bail;
+
 	journal = osb->journal->j_journal;
 	err = jbd2_journal_force_commit(journal);
 
@@ -894,9 +897,9 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 	struct ocfs2_super *osb = OCFS2_SB(sb);
 	struct buffer_head *bh = NULL;
 	handle_t *handle = NULL;
-	int locked[MAXQUOTAS] = {0, 0};
-	int credits, qtype;
-	struct ocfs2_mem_dqinfo *oinfo;
+	int qtype;
+	struct dquot *transfer_from[MAXQUOTAS] = { };
+	struct dquot *transfer_to[MAXQUOTAS] = { };
 
 	mlog_entry("(0x%p, '%.*s')\n", dentry,
 	           dentry->d_name.len, dentry->d_name.name);
@@ -969,30 +972,37 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 
 	if ((attr->ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid) ||
 	    (attr->ia_valid & ATTR_GID && attr->ia_gid != inode->i_gid)) {
-		credits = OCFS2_INODE_UPDATE_CREDITS;
+		/*
+		 * Gather pointers to quota structures so that allocation /
+		 * freeing of quota structures happens here and not inside
+		 * vfs_dq_transfer() where we have problems with lock ordering
+		 */
 		if (attr->ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid
 		    && OCFS2_HAS_RO_COMPAT_FEATURE(sb,
 		    OCFS2_FEATURE_RO_COMPAT_USRQUOTA)) {
-			oinfo = sb_dqinfo(sb, USRQUOTA)->dqi_priv;
-			status = ocfs2_lock_global_qf(oinfo, 1);
-			if (status < 0)
+			transfer_to[USRQUOTA] = dqget(sb, attr->ia_uid,
+						      USRQUOTA);
+			transfer_from[USRQUOTA] = dqget(sb, inode->i_uid,
+							USRQUOTA);
+			if (!transfer_to[USRQUOTA] || !transfer_from[USRQUOTA]) {
+				status = -ESRCH;
 				goto bail_unlock;
-			credits += ocfs2_calc_qinit_credits(sb, USRQUOTA) +
-				ocfs2_calc_qdel_credits(sb, USRQUOTA);
-			locked[USRQUOTA] = 1;
+			}
 		}
 		if (attr->ia_valid & ATTR_GID && attr->ia_gid != inode->i_gid
 		    && OCFS2_HAS_RO_COMPAT_FEATURE(sb,
 		    OCFS2_FEATURE_RO_COMPAT_GRPQUOTA)) {
-			oinfo = sb_dqinfo(sb, GRPQUOTA)->dqi_priv;
-			status = ocfs2_lock_global_qf(oinfo, 1);
-			if (status < 0)
+			transfer_to[GRPQUOTA] = dqget(sb, attr->ia_gid,
+						      GRPQUOTA);
+			transfer_from[GRPQUOTA] = dqget(sb, inode->i_gid,
+							GRPQUOTA);
+			if (!transfer_to[GRPQUOTA] || !transfer_from[GRPQUOTA]) {
+				status = -ESRCH;
 				goto bail_unlock;
-			credits += ocfs2_calc_qinit_credits(sb, GRPQUOTA) +
-				   ocfs2_calc_qdel_credits(sb, GRPQUOTA);
-			locked[GRPQUOTA] = 1;
+			}
 		}
-		handle = ocfs2_start_trans(osb, credits);
+		handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS +
+					   2 * ocfs2_quota_trans_credits(sb));
 		if (IS_ERR(handle)) {
 			status = PTR_ERR(handle);
 			mlog_errno(status);
@@ -1030,18 +1040,18 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 bail_commit:
 	ocfs2_commit_trans(osb, handle);
 bail_unlock:
-	for (qtype = 0; qtype < MAXQUOTAS; qtype++) {
-		if (!locked[qtype])
-			continue;
-		oinfo = sb_dqinfo(sb, qtype)->dqi_priv;
-		ocfs2_unlock_global_qf(oinfo, 1);
-	}
 	ocfs2_inode_unlock(inode, 1);
 bail_unlock_rw:
 	if (size_change)
 		ocfs2_rw_unlock(inode, 1);
 bail:
 	brelse(bh);
+
+	/* Release quota pointers in case we acquired them */
+	for (qtype = 0; qtype < MAXQUOTAS; qtype++) {
+		dqput(transfer_to[qtype]);
+		dqput(transfer_from[qtype]);
+	}
 
 	if (!status && attr->ia_valid & ATTR_MODE) {
 		status = ocfs2_acl_chmod(inode);
@@ -1841,6 +1851,7 @@ relock:
 		if (ret)
 			goto out_dio;
 
+		count = ocount;
 		ret = generic_write_checks(file, ppos, &count,
 					   S_ISBLK(inode->i_mode));
 		if (ret)
@@ -1908,8 +1919,26 @@ out_sems:
 
 	mutex_unlock(&inode->i_mutex);
 
+	if (written)
+		ret = written;
 	mlog_exit(ret);
-	return written ? written : ret;
+	return ret;
+}
+
+static int ocfs2_splice_to_file(struct pipe_inode_info *pipe,
+				struct file *out,
+				struct splice_desc *sd)
+{
+	int ret;
+
+	ret = ocfs2_prepare_inode_for_write(out->f_path.dentry,	&sd->pos,
+					    sd->total_len, 0, NULL);
+	if (ret < 0) {
+		mlog_errno(ret);
+		return ret;
+	}
+
+	return splice_from_pipe_feed(pipe, sd, pipe_to_file);
 }
 
 static ssize_t ocfs2_file_splice_write(struct pipe_inode_info *pipe,
@@ -1919,34 +1948,76 @@ static ssize_t ocfs2_file_splice_write(struct pipe_inode_info *pipe,
 				       unsigned int flags)
 {
 	int ret;
-	struct inode *inode = out->f_path.dentry->d_inode;
+	struct address_space *mapping = out->f_mapping;
+	struct inode *inode = mapping->host;
+	struct splice_desc sd = {
+		.total_len = len,
+		.flags = flags,
+		.pos = *ppos,
+		.u.file = out,
+	};
 
 	mlog_entry("(0x%p, 0x%p, %u, '%.*s')\n", out, pipe,
 		   (unsigned int)len,
 		   out->f_path.dentry->d_name.len,
 		   out->f_path.dentry->d_name.name);
 
-	inode_double_lock(inode, pipe->inode);
+	if (pipe->inode)
+		mutex_lock_nested(&pipe->inode->i_mutex, I_MUTEX_PARENT);
 
-	ret = ocfs2_rw_lock(inode, 1);
-	if (ret < 0) {
-		mlog_errno(ret);
-		goto out;
+	splice_from_pipe_begin(&sd);
+	do {
+		ret = splice_from_pipe_next(pipe, &sd);
+		if (ret <= 0)
+			break;
+
+		mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
+		ret = ocfs2_rw_lock(inode, 1);
+		if (ret < 0)
+			mlog_errno(ret);
+		else {
+			ret = ocfs2_splice_to_file(pipe, out, &sd);
+			ocfs2_rw_unlock(inode, 1);
+		}
+		mutex_unlock(&inode->i_mutex);
+	} while (ret > 0);
+	splice_from_pipe_end(pipe, &sd);
+
+	if (pipe->inode)
+		mutex_unlock(&pipe->inode->i_mutex);
+
+	if (sd.num_spliced)
+		ret = sd.num_spliced;
+
+	if (ret > 0) {
+		unsigned long nr_pages;
+
+		*ppos += ret;
+		nr_pages = (ret + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
+
+		/*
+		 * If file or inode is SYNC and we actually wrote some data,
+		 * sync it.
+		 */
+		if (unlikely((out->f_flags & O_SYNC) || IS_SYNC(inode))) {
+			int err;
+
+			mutex_lock(&inode->i_mutex);
+			err = ocfs2_rw_lock(inode, 1);
+			if (err < 0) {
+				mlog_errno(err);
+			} else {
+				err = generic_osync_inode(inode, mapping,
+						  OSYNC_METADATA|OSYNC_DATA);
+				ocfs2_rw_unlock(inode, 1);
+			}
+			mutex_unlock(&inode->i_mutex);
+
+			if (err)
+				ret = err;
+		}
+		balance_dirty_pages_ratelimited_nr(mapping, nr_pages);
 	}
-
-	ret = ocfs2_prepare_inode_for_write(out->f_path.dentry, ppos, len, 0,
-					    NULL);
-	if (ret < 0) {
-		mlog_errno(ret);
-		goto out_unlock;
-	}
-
-	ret = generic_file_splice_write_nolock(pipe, out, ppos, len, flags);
-
-out_unlock:
-	ocfs2_rw_unlock(inode, 1);
-out:
-	inode_double_unlock(inode, pipe->inode);
 
 	mlog_exit(ret);
 	return ret;
@@ -1958,7 +2029,7 @@ static ssize_t ocfs2_file_splice_read(struct file *in,
 				      size_t len,
 				      unsigned int flags)
 {
-	int ret = 0;
+	int ret = 0, lock_level = 0;
 	struct inode *inode = in->f_path.dentry->d_inode;
 
 	mlog_entry("(0x%p, 0x%p, %u, '%.*s')\n", in, pipe,
@@ -1969,12 +2040,12 @@ static ssize_t ocfs2_file_splice_read(struct file *in,
 	/*
 	 * See the comment in ocfs2_file_aio_read()
 	 */
-	ret = ocfs2_inode_lock(inode, NULL, 0);
+	ret = ocfs2_inode_lock_atime(inode, in->f_vfsmnt, &lock_level);
 	if (ret < 0) {
 		mlog_errno(ret);
 		goto bail;
 	}
-	ocfs2_inode_unlock(inode, 0);
+	ocfs2_inode_unlock(inode, lock_level);
 
 	ret = generic_file_splice_read(in, ppos, pipe, len, flags);
 

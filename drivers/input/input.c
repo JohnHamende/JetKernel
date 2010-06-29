@@ -42,6 +42,7 @@ static unsigned int input_abs_bypass_init_data[] __initdata = {
 	ABS_MT_POSITION_Y,
 	ABS_MT_TOOL_TYPE,
 	ABS_MT_BLOB_ID,
+	ABS_MT_TRACKING_ID,
 	0
 };
 static unsigned long input_abs_bypass[BITS_TO_LONGS(ABS_CNT)];
@@ -149,6 +150,11 @@ static void input_start_autorepeat(struct input_dev *dev, int code)
 	}
 }
 
+static void input_stop_autorepeat(struct input_dev *dev)
+{
+	del_timer(&dev->timer);
+}
+
 #define INPUT_IGNORE_EVENT	0
 #define INPUT_PASS_TO_HANDLERS	1
 #define INPUT_PASS_TO_DEVICE	2
@@ -188,6 +194,8 @@ static void input_handle_event(struct input_dev *dev,
 				__change_bit(code, dev->key);
 				if (value)
 					input_start_autorepeat(dev, code);
+				else
+					input_stop_autorepeat(dev);
 			}
 
 			disposition = INPUT_PASS_TO_HANDLERS;
@@ -763,11 +771,11 @@ static inline void input_wakeup_procfs_readers(void)
 
 static unsigned int input_proc_devices_poll(struct file *file, poll_table *wait)
 {
-	int state = input_devices_state;
-
 	poll_wait(file, &input_devices_poll_wait, wait);
-	if (state != input_devices_state)
+	if (file->f_version != input_devices_state) {
+		file->f_version = input_devices_state;
 		return POLLIN | POLLRDNORM;
+	}
 
 	return 0;
 }
@@ -928,8 +936,6 @@ static int __init input_proc_init(void)
 	proc_bus_input_dir = proc_mkdir("bus/input", NULL);
 	if (!proc_bus_input_dir)
 		return -ENOMEM;
-
-	proc_bus_input_dir->owner = THIS_MODULE;
 
 	entry = proc_create("devices", 0, proc_bus_input_dir,
 			    &input_devices_fileops);
@@ -1259,8 +1265,14 @@ static struct device_type input_dev_type = {
 	.uevent		= input_dev_uevent,
 };
 
+static char *input_nodename(struct device *dev)
+{
+	return kasprintf(GFP_KERNEL, "input/%s", dev_name(dev));
+}
+
 struct class input_class = {
 	.name		= "input",
+	.nodename	= input_nodename,
 };
 EXPORT_SYMBOL_GPL(input_class);
 
@@ -1570,7 +1582,6 @@ int input_register_handle(struct input_handle *handle)
 		return error;
 	list_add_tail_rcu(&handle->d_node, &dev->h_list);
 	mutex_unlock(&dev->mutex);
-	synchronize_rcu();
 
 	/*
 	 * Since we are supposed to be called from ->connect()
