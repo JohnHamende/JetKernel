@@ -113,14 +113,14 @@
 #define UFCON S3C2410_UFCON_RXTRIG8 | S3C2410_UFCON_FIFOMODE
 
 
-static void volans_init_gpio(void)
+static void jet_gpio_init(void)
 {
 	struct __gpio_config *pgpio;
 	unsigned int pin;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(volans_gpio_table); i++) {
-		pgpio = &volans_gpio_table[i];
+	for (i = 0; i < ARRAY_SIZE(jet_gpio_table); i++) {
+		pgpio = &jet_gpio_table[i];
 		pin = pgpio->gpio;
 
 		if (pgpio->level != GPIO_LEVEL_NONE)
@@ -150,50 +150,87 @@ static void volans_init_gpio(void)
 	}
 }
 
+#if 0
+void s3c_config_gpio_table(int array_size, int (*gpio_table)[6])
+{
+	u32 i, gpio;
+
+	pr_debug("%s: ++\n", __func__);
+	for (i = 0; i < array_size; i++) {
+		gpio = gpio_table[i][0];
+		if (gpio < S3C64XX_GPIO_ALIVE_PART_BASE) { /* Off Part */
+			pr_debug("%s: Off gpio=%d,%d\n", __func__, gpio, 
+					S3C64XX_GPIO_ALIVE_PART_BASE);
+			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(gpio_table[i][1]));
+			s3c_gpio_setpull(gpio, gpio_table[i][3]);
+			s3c_gpio_slp_cfgpin(gpio, gpio_table[i][4]);
+			s3c_gpio_slp_setpull_updown(gpio, gpio_table[i][5]);
+			if (gpio_table[i][2] != GPIO_LEVEL_NONE)
+				gpio_set_value(gpio, gpio_table[i][2]);
+		} else if (gpio < S3C64XX_GPIO_MEM_PART_BASE) { /* Alive Part */
+			pr_debug("%s: Alive gpio=%d\n", __func__, gpio);
+			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(gpio_table[i][1]));
+			s3c_gpio_setpull(gpio, gpio_table[i][3]);
+			if (gpio_table[i][2] != GPIO_LEVEL_NONE)
+				gpio_set_value(gpio, gpio_table[i][2]);
+		} else { /* Memory Part */
+			pr_debug("%s: Memory gpio=%d\n", __func__, gpio);
+			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(gpio_table[i][1]));
+			s3c_gpio_setpull(gpio, gpio_table[i][3]);
+			s3c_gpio_slp_cfgpin(gpio, gpio_table[i][4]);
+			s3c_gpio_slp_setpull_updown(gpio, gpio_table[i][5]);
+			if (gpio_table[i][2] != GPIO_LEVEL_NONE)
+				gpio_set_value(gpio, gpio_table[i][2]);
+		}
+	}
+	pr_debug("%s: --\n", __func__);
+}
+EXPORT_SYMBOL(s3c_config_gpio_table);
+
+void jet_init_gpio(void)
+{
+	s3c_config_gpio_table(ARRAY_SIZE(jet_gpio_table),
+			jet_gpio_table);
+}
+#endif
+
 #ifndef CONFIG_HIGH_RES_TIMERS
 extern struct sys_timer s3c64xx_timer;
 #else
 extern struct sys_timer sec_timer;
 #endif /* CONFIG_HIGH_RES_TIMERS */
-/*
-static struct i2c_gpio_platform_data i2c_pmic_platdata = {
-	.sda_pin	= GPIO_PWR_I2C_SDA,
-	.scl_pin	= GPIO_PWR_I2C_SCL,
-	.udelay		= 2,
+
+#if defined(CONFIG_I2C_GPIO)
+static struct i2c_gpio_platform_data i2c2_platdata = {
+	.sda_pin		= GPIO_FM_I2C_SDA,
+	.scl_pin		= GPIO_FM_I2C_SCL,
+	.udelay			= 2,	/* 250KHz */		
 	.sda_is_open_drain	= 0,
 	.scl_is_open_drain	= 0,
-	.scl_is_output_only	= 1
+	.scl_is_output_only	= 1,
 };
 
-static struct platform_device sec_device_i2c_pmic = {
-	.name	= "i2c-gpio",
-	.id		= 2,
-	.dev.platform_data	= &i2c_pmic_platdata,
+static struct platform_device s3c_device_i2c2 = {
+	.name				= "i2c-gpio",
+	.id					= 2,
+	.dev.platform_data	= &i2c2_platdata,
 };
-*/
-/*
-static struct i2c_board_info i2c_devs0[] __initdata = {
-	{ I2C_BOARD_INFO("KXSD9", 0x18), },	//  accelerator 
-	{ I2C_BOARD_INFO("USBIC", 0x25), },	//  uUSB ic 
-	{ I2C_BOARD_INFO("max17040", 0x36), },	//  max17040 fuel gauge 
-};
-*/
 
-static struct i2c_gpio_platform_data i2c_common_platdata = {
-	.sda_pin	= GPIO_FM_SDA,
-	.scl_pin	= GPIO_FM_SCL,
-//	.udelay		= 2,
-	.udelay		= 3,
+static struct i2c_gpio_platform_data i2c3_platdata = {
+	.sda_pin		= GPIO_PWR_I2C_SDA,
+	.scl_pin		= GPIO_PWR_I2C_SCL,
+	.udelay			= 2,	/* 250KHz */		
 	.sda_is_open_drain	= 0,
 	.scl_is_open_drain	= 0,
-	.scl_is_output_only	= 1
+	.scl_is_output_only	= 1,
 };
 
-static struct platform_device sec_device_i2c_common = {
-	.name	= "i2c-gpio",
-	.id		= 5,
-	.dev.platform_data	= &i2c_common_platdata,
+static struct platform_device s3c_device_i2c3 = {
+	.name				= "i2c-gpio",
+	.id					= 3,
+	.dev.platform_data	= &i2c3_platdata,
 };
+#endif
 
 
 static struct i2c_board_info i2c_devs0[] __initdata = {
@@ -211,10 +248,6 @@ static struct i2c_board_info i2c_devs3[] __initdata = {
 };
 
 /* 
-static struct i2c_board_info i2c_devs0[] __initdata = {
-//	 { I2C_BOARD_INFO("24c08", 0x50), }, 
-	 { I2C_BOARD_INFO("wm8987", 0x1a), }, 
-
 #ifdef CONFIG_SMDK6410_WM1190_EV1
 	{ I2C_BOARD_INFO("wm8350", 0x1a),
 	  .platform_data = &smdk6410_wm8350_pdata,
@@ -487,6 +520,10 @@ static struct platform_device *smdk6410_devices[] __initdata = {
 #endif
 	&s3c_device_i2c0,
 	&s3c_device_i2c1,
+#ifdef CONFIG_I2C_GPIO
+	&s3c_device_i2c2,
+	&s3c_device_i2c3,
+#endif
 #ifdef CONFIG_FB_S3C_ORG
 	&smdk6410_lcd_powerdev,
 	&s3c_device_fb,
@@ -530,7 +567,6 @@ static struct platform_device *smdk6410_devices[] __initdata = {
 #endif
 	&android_usb_device,
 //bss	&sec_device_i2c_pmic,			/* pmic(max8698) i2c. */
-	&sec_device_i2c_common,			/* radio, sound, .. i2c. */
 //	&smdk6410_smsc911x,
 };
 
@@ -837,7 +873,12 @@ static void __init smdk6410_machine_init(void)
 {
 	s3c_i2c0_set_platdata(NULL);
 	s3c_i2c1_set_platdata(NULL);
-	
+
+#ifdef CONFIG_I2C_GPIO
+//	s3c_i2c2_set_platdata(&i2c2_platdata)
+//	s3c_i2c3_set_platdata(&i2c3_platdata)
+#endif 
+
 	s3c_ts_set_platdata(&s3c_ts_platform);
 	s3c_adc_set_platdata(&s3c_adc_platform);
 	
@@ -848,14 +889,18 @@ static void __init smdk6410_machine_init(void)
 	s3c_fimc1_set_platdata(NULL);
 
 	//volans_init_gpio();
-	smdk6410_gpio_init();
+	//smdk6410_gpio_init();
+	jet_gpio_init();
 
 	//writel(readl(S3C_PCLK_GATE)|S3C_CLKCON_PCLK_GPIO, S3C_PCLK_GATE);
    //    __raw_writel(0x088698ee, S3C_PCLK_GATE);
+
 	i2c_register_board_info(0, i2c_devs0, ARRAY_SIZE(i2c_devs0));
 	i2c_register_board_info(1, i2c_devs1, ARRAY_SIZE(i2c_devs1));
+#ifdef CONFIG_I2C_GPIO
 	i2c_register_board_info(2, i2c_devs2, ARRAY_SIZE(i2c_devs2));
 	i2c_register_board_info(3, i2c_devs3, ARRAY_SIZE(i2c_devs3));
+#endif
 
 	platform_add_devices(smdk6410_devices, ARRAY_SIZE(smdk6410_devices));
 	s3c_pm_init();

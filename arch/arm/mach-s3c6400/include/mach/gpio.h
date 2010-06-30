@@ -12,6 +12,8 @@
  * published by the Free Software Foundation.
 */
 
+#ifndef __MACH_HARDWARE_H
+#define __MACH_HARDWARE_H __FILE__
 
 #define gpio_get_value	__gpio_get_value
 #define gpio_set_value	__gpio_set_value
@@ -141,5 +143,6 @@ enum s3c_gpio_number {
 #include <plat/gpio-bank-p.h>
 #include <plat/gpio-bank-q.h>
 
+#endif
 
 

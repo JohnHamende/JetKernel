@@ -11,7 +11,14 @@
 #ifndef __ASM_ARCH_HARDWARE_H
 #define __ASM_ARCH_HARDWARE_H __FILE__
 
+#ifdef CONFIG_JET_OPTION
+#include <mach/instinctq.h> 
+#else
 #include <mach/volans.h>
-/* currently nothing here, placeholder */
+#endif
+
+#ifdef CONFIG_MACH_INSTINCTQ
+#include <mach/instinctq.h> 
+#endif
 
 #endif /* __ASM_ARCH_IRQ_H */
